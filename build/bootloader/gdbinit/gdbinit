@@ -1,0 +1,2 @@
+source E:/Esp32_robot/build/bootloader/gdbinit/symbols
+source E:/Esp32_robot/build/bootloader/gdbinit/connect
