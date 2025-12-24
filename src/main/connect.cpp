@@ -3,9 +3,9 @@
 std::queue<String> commandQueue;
 
 void BltCallbacks::onWrite(BLECharacteristic* pCharacteristic) {  
-    String value = pCharacteristic->getValue();  
-    if (!value.isEmpty()) {  
-        String cmd = String(value.c_str());  
+    std::string value = pCharacteristic->getValue();  
+    if (!value.empty()) {  
+        String cmd = String(value.c_str()); 
         cmd.trim();  
         commandQueue.push(cmd);
     }  
@@ -47,7 +47,7 @@ void handle_cmd() {
 
   if (!cmd.isEmpty()) {
     last_time = millis();
-    StaticJsonDocument<1024> doc;
+    JsonDocument doc;  // 修复：使用JsonDocument替代StaticJsonDocument
     DeserializationError error = deserializeJson(doc, cmd);
 
     if (error) {

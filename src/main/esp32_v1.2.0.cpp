@@ -1,3 +1,4 @@
+#include "Arduino.h"
 #include "emoji.h"
 #include "head.h"
 #include "connect.h"
