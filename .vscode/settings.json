@@ -1,3 +1,4 @@
 {
-    "idf.currentSetup": "e:\\ESP-idf\\v5.5.1\\esp-idf"
+    "idf.currentSetup": "e:\\ESP-idf\\v5.5.1\\esp-idf",
+    "cmake.sourceDirectory": "C:/Users/Xu/Documents/PlatformIO/Projects/_ESP_start/src/main"
 }

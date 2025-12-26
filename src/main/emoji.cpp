@@ -1,13 +1,17 @@
 #include "emoji.h"
 #include "animation.h"
 
-// Adjustable
+// ---------------------------------------------------------
+// 表情参数
+// ---------------------------------------------------------
+// 定义眼睛的基础尺寸和位置参数
 const int ref_eye_height = 40;
 const int ref_eye_width = 40;
 const int ref_space_between_eye = 10;
-const int ref_corner_radius = 10;
+const int ref_corner_radius = 10; // 圆角半径
 
-// Current state of the eyes
+// 状态变量：当前眼睛的属性（高度、宽度、坐标）
+// 通过修改这些变量再调用 draw_eyes() 即可实现动效
 int left_eye_height = ref_eye_height;
 int left_eye_width = ref_eye_width;
 int right_eye_x = 32 + ref_eye_width + ref_space_between_eye;
@@ -20,29 +24,32 @@ int right_eye_width = ref_eye_width;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 void setup_emoji() {
+  // 初始化 I2C OLED
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println("[Error] SSD1306 Initiate Failed.");
-    while (1);  // Pause
-  } else {
-    Serial.println("SSD1306 is Ready.");
-    display.clearDisplay();
+    while (1);  
   }
-  play_animation(35);
-  eye_sleep();
-  eye_wakeup();
-  eye_center();
-  eye_blink();
+  Serial.println("SSD1306 is Ready.");
+  display.clearDisplay();
+  
+  // 开机动效流程
+  play_animation(35); // 播放位图动画 (Thinking)
+  eye_sleep();        // 变成一条线 (睡觉)
+  eye_wakeup();       // 慢慢睁开
+  eye_center();       // 回中
+  eye_blink();        // 眨眼一次
 }
 
+// ---------------------------------------------------------
+// 扫视动效 (Saccade)
+// ---------------------------------------------------------
+// 模拟眼球快速微动，这是生物眼球的典型特征，能增加真实感
 void saccade(int direction_x, int direction_y) {
-  //quick movement of the eye, no size change. stay at position after movement, will not move back,  call again with opposite direction
-  //direction == -1 :  move left
-  //direction == 1 :  move right
-
   int direction_x_movement_amplitude = 8;
   int direction_y_movement_amplitude = 6;
-  int eye_blink_amplitude = 8;
+  int eye_blink_amplitude = 8; // 扫视时稍微眯眼
 
+  // 快速移动过去
   for (int i = 0; i < 1; i++) {
     left_eye_x += direction_x_movement_amplitude * direction_x;
     right_eye_x += direction_x_movement_amplitude * direction_x;
@@ -141,17 +148,24 @@ void move_eye(int direction) {  // MOVES TO RIGHT OR LEFT DEPENDING ON 1 OR -1 I
   eye_center();
 }
 
+// ---------------------------------------------------------
+// 核心绘制函数
+// ---------------------------------------------------------
 void draw_eyes(bool update) {
   display.clearDisplay();
-  //draw from center
+  // 计算左眼左上角坐标 (因为 fillRoundRect 从左上角开始画)
   int x = int(left_eye_x - left_eye_width / 2);
   int y = int(left_eye_y - left_eye_height / 2);
+  // 画左眼 (白色圆角矩形)
   display.fillRoundRect(x, y, left_eye_width, left_eye_height, ref_corner_radius, SSD1306_WHITE);
+  
+  // 画右眼
   x = int(right_eye_x - right_eye_width / 2);
   y = int(right_eye_y - right_eye_height / 2);
   display.fillRoundRect(x, y, right_eye_width, right_eye_height, ref_corner_radius, SSD1306_WHITE);
+  
   if (update) {
-    display.display();
+    display.display(); // 刷新屏幕缓冲区到硬件
   }
 }
 
@@ -170,13 +184,18 @@ void eye_center(bool update) {
   draw_eyes(update);
 }
 
+// ---------------------------------------------------------
+// 眨眼动画
+// ---------------------------------------------------------
 void eye_blink(int speed) {
   draw_eyes();
+  // 闭眼：循环减小高度
   for (int i = 0; i < 3; i++) {
     left_eye_height = left_eye_height - speed;
     right_eye_height = right_eye_height - speed;
     draw_eyes();
   }
+  // 睁眼：循环增加高度
   for (int i = 0; i < 3; i++) {
     left_eye_height = left_eye_height + speed;
     right_eye_height = right_eye_height + speed;

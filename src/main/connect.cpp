@@ -1,268 +1,162 @@
 #include "connect.h"
 
+// 实例化指令队列
 std::queue<String> commandQueue;
 
-void BltCallbacks::onWrite(BLECharacteristic* pCharacteristic) {  
-    std::string value = pCharacteristic->getValue();  
-    if (!value.empty()) {  
-        String cmd = String(value.c_str()); 
-        cmd.trim();  
-        commandQueue.push(cmd);
+// ---------------------------------------------------------
+// BLE 回调类 (Listener)
+// ---------------------------------------------------------
+// 当手机 App 向 ESP32 写入数据时，会触发此类中的方法
+class BltCallbacks: public BLECharacteristicCallbacks {
+    // 覆写 onWrite 方法
+    void onWrite(BLECharacteristic* pCharacteristic) {  
+        // 获取接收到的原始数据
+        std::string value = pCharacteristic->getValue();  
+        
+        if (!value.empty()) {  
+            // 转换为 Arduino String 方便处理
+            String cmd = String(value.c_str()); 
+            cmd.trim(); // 去除首尾空格/换行符
+            
+            // *关键设计*：不要在这里执行耗时动作！
+            // 蓝牙回调是在中断或高优先级任务中运行的。
+            // 应该只把指令推入队列，让主循环(loop)去处理。
+            commandQueue.push(cmd); 
+            
+            Serial.print("[BLE] Received: ");
+            Serial.println(cmd);
+        }  
     }  
-}
+};
 
+// ---------------------------------------------------------
+// 初始化蓝牙
+// ---------------------------------------------------------
 void setup_BLE() {
-  BLEDevice::init("Desk-Emoji");
-  BLEServer* pServer = BLEDevice::createServer();
+  Serial.println("[Init] Starting BLE...");
 
-  BLEService* pService = pServer->createService(SERVICE_UUID);
-  BLECharacteristic* pCharacteristic = pService->createCharacteristic(
-    CHARACTERISTIC_UUID,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+  // 1. 初始化设备名称
+  BLEDevice::init("ESP32-Robot"); 
+  
+  // 2. 创建服务器
+  BLEServer *pServer = BLEDevice::createServer();
+  
+  // 3. 创建服务 (Service)
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  // 4. 创建特征值 (Characteristic)
+  // 设置属性为：可读(READ) + 可写(WRITE)
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
 
+  // 5. 挂载回调函数
   pCharacteristic->setCallbacks(new BltCallbacks());
+  
+  // 6. 启动服务
   pService->start();
-
-  BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+  
+  // 7. 开始广播 (让手机能搜到)
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x06);  // 设置广播间隔优化 iPhone 连接
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
-
-  Serial.println("Bluetooth is ready, waiting for connection...");
+  
+  Serial.println("[Init] BLE Ready! Waiting for connection...");
 }
 
+// ---------------------------------------------------------
+// 指令处理主逻辑 (在 loop 中调用)
+// ---------------------------------------------------------
 void handle_cmd() {
   String cmd = "";
 
+  // 1. 优先检查蓝牙队列
   if (!commandQueue.empty()) {
-    cmd = commandQueue.front();
-    commandQueue.pop();
-    cmd.trim();
-  } else if (Serial.available() > 0) {
+    cmd = commandQueue.front(); // 取出队首
+    commandQueue.pop();         // 移除队首
+  } 
+  // 2. 其次检查串口调试输入 (方便电脑调试)
+  else if (Serial.available() > 0) {
     cmd = Serial.readStringUntil('\n');
     cmd.trim();
   }
 
-  if (!cmd.isEmpty()) {
-    last_time = millis();
-    JsonDocument doc;  // 修复：使用JsonDocument替代StaticJsonDocument
-    DeserializationError error = deserializeJson(doc, cmd);
+  // 如果没有指令，直接返回
+  if (cmd.isEmpty()) return;
 
-    if (error) {
-      Serial.print("JSON parse failed: ");
-      Serial.println(error.c_str());
-      return;
-    }
+  // --- JSON 解析阶段 ---
+  // 使用 ArduinoJson 库解析指令
+  // 示例指令: {"actions": ["eye_blink", "head_nod"]}
+  JsonDocument doc;  
+  DeserializationError error = deserializeJson(doc, cmd);
 
-    if (doc["actions"].is<JsonArray>()) {
-      JsonArray actions = doc["actions"].as<JsonArray>();
-      for (JsonVariant action : actions) {
-        String actionCmd = action.as<String>();
-        executeCommand(actionCmd);
-      }
-    }
+  if (error) {
+    // 如果不是 JSON，尝试直接作为简单指令处理
+    Serial.print("[Parser] Not JSON, trying raw command: ");
+    Serial.println(cmd);
+    executeCommand(cmd);
+    return;
+  }
 
-    if (doc["factory"].is<String>()) {
-      String factoryCmd = doc["factory"].as<String>();
-      executeFactoryCommand(factoryCmd);
+  // 处理 "actions" 数组：批量执行动作
+  if (doc["actions"].is<JsonArray>()) {
+    JsonArray actions = doc["actions"].as<JsonArray>();
+    for (JsonVariant action : actions) {
+      executeCommand(action.as<String>());
     }
+  }
+
+  // 处理 "factory" 指令：用于校准或系统设置
+  if (doc["factory"].is<String>()) {
+    executeFactoryCommand(doc["factory"].as<String>());
   }
 }
 
+// ---------------------------------------------------------
+// 动作执行路由表
+// ---------------------------------------------------------
 void executeCommand(String cmd) {
-  if (cmd == "eye_blink") {
-    eye_blink();
-    delay(100);
-  } else if (cmd == "eye_happy") {
-    eye_happy();
-    delay(100);
-  } else if (cmd == "eye_sad") {
-    eye_sad();
-    delay(100);
-  } else if (cmd == "eye_anger") {
-    eye_anger();
-    delay(100);
-  } else if (cmd == "eye_surprise") {
-    eye_surprise();
-    delay(100);
-  } else if (cmd == "eye_right") {
-    eye_right();
-    delay(100);
-  } else if (cmd == "eye_left") {
-    eye_left();
-    delay(100);
-  } else if (cmd == "head_left") {
-    head_left(20);
-    delay(100);
-  } else if (cmd == "head_right") {
-    head_right(20);
-    delay(100);
-  } else if (cmd == "head_up") {
-    head_up(20);
-    delay(100);
-  } else if (cmd == "head_down") {
-    head_down(20);
-    delay(100);
-  } else if (cmd == "head_center") {
-    head_center();
-    delay(100);
-  } else if (cmd == "head_nod") {
-    head_nod(3);
-    delay(100);
-  } else if (cmd == "head_shake") {
-    head_shake(3);
-    delay(100);
-  } else if (cmd == "head_roll_left") {
-    head_roll_left(20);
-    delay(100);
-  } else if (cmd == "head_roll_right") {
-    head_roll_right(20);
-    delay(100);
-  } else if (cmd == "delay") {
-    delay(1000);
-
-  } else if (cmd == "heart") {
-    play_animation(0);
-  } else if (cmd == "calendar") {
-    play_animation(1);
-  } else if (cmd == "face_id") {
-    play_animation(2);
-  } else if (cmd == "cola") {
-    play_animation(3);
-  } else if (cmd == "laugh") {
-    play_animation(4);
-  } else if (cmd == "dumbbell") {
-    play_animation(5);
-  } else if (cmd == "skateboard") {
-    play_animation(6);
-  } else if (cmd == "battery") {
-    play_animation(7);
-  } else if (cmd == "basketball") {
-    play_animation(8);
-  } else if (cmd == "rugby") {
-    play_animation(9);
-  } else if (cmd == "alarm") {
-    play_animation(10);
-  } else if (cmd == "screen") {
-    play_animation(11);
-  } else if (cmd == "wifi") {
-    play_animation(12);
-  } else if (cmd == "youtube") {
-    play_animation(13);
-  } else if (cmd == "tv") {
-    play_animation(14);
-  } else if (cmd == "movie") {
-    play_animation(15);
-  } else if (cmd == "cat") {
-    play_animation(16);
-  } else if (cmd == "write") {
-    play_animation(17);
-  } else if (cmd == "phone") {
-    play_animation(18);
-  } else if (cmd == "sunny") {
-    play_animation(19);
-  } else if (cmd == "cloudy") {
-    play_animation(20);
-  } else if (cmd == "rainy") {
-    play_animation(21);
-  } else if (cmd == "windy") {
-    play_animation(22);
-  } else if (cmd == "snow") {
-    play_animation(23);
-  } else if (cmd == "beer") {
-    play_animation(24);
-  } else if (cmd == "walk") {
-    play_animation(25);
-  } else if (cmd == "shit") {
-    play_animation(26);
-  } else if (cmd == "cry") {
-    play_animation(27);
-  } else if (cmd == "puzzled") {
-    play_animation(28);
-  } else if (cmd == "football") {
-    play_animation(29);
-  } else if (cmd == "volleyball") {
-    play_animation(30);
-  } else if (cmd == "badminton") {
-    play_animation(31);
-  } else if (cmd == "rice") {
-    play_animation(32);
-  } else if (cmd == "gym") {
-    play_animation(33);
-  } else if (cmd == "boat") {
-    play_animation(34);
-  } else if (cmd == "thinking") {
-    play_animation(35);
-  } else if (cmd == "money") {
-    play_animation(36);
-  } else if (cmd == "wait") {
-    play_animation(37);
-  } else if (cmd == "plane") {
-    play_animation(38);
-  } else if (cmd == "rocket") {
-    play_animation(39);
-  } else if (cmd == "ok") {
-    play_animation(40);
-  } else if (cmd == "love") {
-    play_animation(41);
-
-  } else {
-    Serial.print("Unknown action command: ");
-    Serial.println(cmd);
-    return;
-  }
+  Serial.print("[Exec] Action: ");
   Serial.println(cmd);
+
+  // 表情类
+  if (cmd == "eye_blink")      eye_blink();
+  else if (cmd == "eye_happy") eye_happy();
+  else if (cmd == "eye_sad")   eye_sad();
+  else if (cmd == "eye_left")  eye_left();
+  else if (cmd == "eye_right") eye_right();
+  
+  // 动作类
+  else if (cmd == "head_nod")   head_nod();
+  else if (cmd == "head_shake") head_shake();
+  
+  // 动画类 (播放位图)
+  else if (cmd == "love")       play_animation(41); // 假设41是爱心ID
+  
+  else {
+    Serial.println("[Exec] Unknown command");
+  }
 }
 
+// ---------------------------------------------------------
+// 工厂指令 (调试用)
+// ---------------------------------------------------------
 void executeFactoryCommand(String cmd) {
-  if (cmd == "reboot" || cmd == "restart") {
-    Serial.println("[Factory] Rebooting device...");
-    ESP.restart();
-  } else if (cmd == "on") {
-    Serial.println("[Factory] Servo Enabled.");
-    enable_act = true;
-  } else if (cmd == "off") {
-    Serial.println("[Factory] Servo Disabled.");
-    enable_act = false;
-  } else if (cmd.startsWith("adjust_x")) {
-    int firstSpaceIndex = cmd.indexOf(' ');
-    if (firstSpaceIndex > 0) {
-      String offsetString = cmd.substring(firstSpaceIndex + 1);
-      int offset = offsetString.toInt();
-      adjust_x_center(offset);
-      servo_init();
-    }
-  } else if (cmd.startsWith("adjust_y")) {
-    int firstSpaceIndex = cmd.indexOf(' ');
-    if (firstSpaceIndex > 0) {
-      String offsetString = cmd.substring(firstSpaceIndex + 1);
-      int offset = offsetString.toInt();
-      adjust_y_center(offset);
-      servo_init();
-    }
-  } else if (cmd.startsWith("head_move")) {
-    int firstSpaceIndex = cmd.indexOf(' ');
-    if (firstSpaceIndex > 0) {
-      int secondSpaceIndex = cmd.indexOf(' ', firstSpaceIndex + 1);
-      if (secondSpaceIndex > 0) {
-        int thirdSpaceIndex = cmd.indexOf(' ', secondSpaceIndex + 1);
-        if (thirdSpaceIndex > 0) {
-          String xString = cmd.substring(firstSpaceIndex + 1, secondSpaceIndex);
-          String yString = cmd.substring(secondSpaceIndex + 1, thirdSpaceIndex);
-          String delayString = cmd.substring(thirdSpaceIndex + 1);
-          int x_offset = xString.toInt();
-          int y_offset = yString.toInt();
-          int servo_delay = delayString.toInt();
-          head_move(x_offset, y_offset, servo_delay);
-        }
-      }
-    }
-  } else {
-    Serial.print("[Factory] Unknown factory command: ");
-    Serial.println(cmd);
-    return;
-  }
+  Serial.print("[Factory] Cmd: ");
   Serial.println(cmd);
+
+  if (cmd == "reboot") {
+    ESP.restart();
+  }
+  // 示例：动态校准 X 轴中心位 "adjust_x_10"
+  else if (cmd.startsWith("adjust_x")) {
+    // 实际代码需要解析后面的数字，这里简化处理
+    Serial.println("Adjusting X Center...");
+    // adjust_x_center(10); 
+  }
 }

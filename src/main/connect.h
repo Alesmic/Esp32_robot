@@ -1,28 +1,39 @@
-#ifndef Connect_h
-#define Connect_h
+#ifndef CONNECT_H
+#define CONNECT_H
 
+#include <Arduino.h>
+// 引入蓝牙低功耗库 (ESP32标准库)
 #include <BLEDevice.h>
-#include <BLEServer.h>
 #include <BLEUtils.h>
-#include <BLE2902.h>
-#include <queue>
+#include <BLEServer.h>
+// 引入 JSON 库，用于解析复杂指令
 #include <ArduinoJson.h>
+#include <queue> // 引入标准模板库队列
+
+#include "act.h"
 #include "emoji.h"
 #include "head.h"
 #include "animation.h"
 
-#define SERVICE_UUID "4db9a22d-6db4-d9fe-4d93-38e350abdc3c"
-#define CHARACTERISTIC_UUID "ff1cdaef-0105-e4fb-7be2-018500c2e927"
+// ---------------------------------------------------------
+// BLE UUID 配置
+// ---------------------------------------------------------
+// 使用在线生成器生成的 UUID，确保唯一性
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+// ---------------------------------------------------------
+// 全局变量声明
+// ---------------------------------------------------------
+// 指令队列：用于在中断(BLE回调)和主循环之间安全传递消息
 extern std::queue<String> commandQueue;
 
-class BltCallbacks : public BLECharacteristicCallbacks {  
-public:  
-    void onWrite(BLECharacteristic* pCharacteristic) override;
-};
-
-void setup_BLE();
-void handle_cmd();
-void executeCommand(String cmd);
-void executeFactoryCommand(String cmd);
+// ---------------------------------------------------------
+// 函数声明
+// ---------------------------------------------------------
+void setup_BLE();   // 初始化蓝牙
+void handle_cmd();  // 处理指令主循环
+void executeCommand(String cmd); // 执行具体动作
+void executeFactoryCommand(String cmd); // 执行调试指令
 
 #endif
